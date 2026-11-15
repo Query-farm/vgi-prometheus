@@ -93,8 +93,10 @@ func (*SamplesFunc) Metadata() vgi.FunctionMetadata {
 			"step_seconds (0 = raw stored samples, default; > 0 = evaluate at a fixed step), start_date/end_date (alternative to a WHERE ts range), " +
 			"chunk_seconds (raw mode request size, default 3600), max_points_per_chunk (step mode, default 11000), secret_name. " +
 			"Columns: metric, job, instance, one column per label_columns entry, labels `MAP(VARCHAR,VARCHAR)`, ts `TIMESTAMPTZ`, value `DOUBLE`, " +
-			"histogram (native histograms). Pushdown: =, <>, IN, IS [NOT] NULL, LIKE/ILIKE, prefix/suffix/contains and regexp_matches on " +
-			"metric/job/instance/label columns become PromQL label matchers; ts comparisons/BETWEEN become the request window. " +
+			"histogram (native histograms). Pushdown: =, <>, IN, OR of equalities on one column, IS [NOT] NULL, LIKE, NOT LIKE, prefix, suffix and " +
+			"contains on metric/job/instance/label columns become PromQL label matchers; ts comparisons/BETWEEN become the request window. " +
+			"DuckDB does not push regexp_matches or ILIKE to the worker, so put a regex matcher in the selector argument instead " +
+			"(e.g. 'up{instance=~\"node-[ab].*\"}'). " +
 			"A lower time bound is required (WHERE ts >= ... or start_date :=). Filters on labels['x'] are applied in DuckDB, so list the label in label_columns to push it.",
 		DocMD: "## samples(metric, label_columns := '', step_seconds := 0, ...)\n\n" +
 			"Typed rows for one metric. SQL filters on label columns compile into the PromQL selector and `ts` ranges into the " +

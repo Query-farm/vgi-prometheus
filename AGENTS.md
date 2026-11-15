@@ -24,15 +24,22 @@ Faster loops while iterating: `make test-unit`, `make test-sql`, `make lint-expl
 cmd/vgi-prometheus-worker/  # main.go: the worker binary (flags -> serve.Main)
 internal/prometheus/
   worker.go        # assembles the catalog; register new functions in NewWorker
-  meta.go          # catalog/schema metadata + helpers (objectTags, column)
-  greet.go         # scalar example (overloads, constant arg with choices)
-  sequence.go      # table function example (named args, streaming state)
-  fetch_items.go   # REST API table function (pagination, retries, secrets)
+  meta.go          # catalog/schema metadata, categories, agent tasks + helpers
+  client.go        # secret -> connection, HTTP GET/POST with retries, API envelope
+  query.go         # query / query_range (chunked, externalized cursor)
+  samples.go       # samples: SQL filters -> PromQL selector + window
+  selector.go      # pushdown planning (matchers, time window)
+  filters.go       # pushed-filter capture and exact re-evaluation in the worker
+  model.go rows.go # API result decoding (floats, NaN/Inf, native histograms) -> Arrow
+  catalog_funcs.go # series, labels, metadata, targets, rules, alerts, tsdb, build info
+  simple.go        # shared one-request table-function shape
+  compute.go       # offline PromQL scalars (upstream parser)
   version.go       # the worker version (checked against release tags)
   *_test.go        # go test unit tests
 internal/serve/    # --http / --unix / stdio and logging flags, shared with recipes
 test/sql/          # sqllogictest files run through DuckDB
-test/mock_api/     # offline mock of the REST API used by tests
+test/fixture_server/  # replay server: recorded.json (live Prometheus) + handwritten.json
+test/fixture/      # live Prometheus fixture (promtool backfill) used to record
 examples/          # recipes (one package main, served by bin/recipes <name>)
 ci/                # integration harness used by `make test-sql` and CI
 scripts/           # vgi_template.py (init / template-diff)
@@ -41,8 +48,8 @@ vgi-agent-tests.yaml  # private graders for the agent test tasks
 
 ## Recipe: add a function
 
-1. Create `internal/prometheus/<name>.go`. Copy the closest example: `greet.go` for a
-   scalar, `sequence.go` for a generator, `fetch_items.go` for an API.
+1. Create `internal/prometheus/<name>.go`. Copy the closest example: `compute.go` for a
+   scalar, `catalog_funcs.go` for a one-request API call, `samples.go` for pushdown.
 2. Declare arguments as a struct with `vgi:"..."` tags. Use `pos=N` for positional
    arguments and `default=V` (no `pos`) for named ones; add `ge=`, `le=`, `pattern=` or
    `choices='a,b'` constraints. Scalar column arguments are `*array.String` (etc.) fields
@@ -140,8 +147,8 @@ v0.42.x speaks the same protocol). See
 - **State must be serializable.** Table-function state (the `S` in `TypedTableFunc[S]`) is gob-encoded into the HTTP continuation token between batches, because each batch can be served by a different request or process. Keep the cursor in *exported* fields (gob silently drops unexported ones, so the scan would restart from row 0), keep it small, and never put secrets in it.
 - **Examples must be deterministic.** Add `ORDER BY`, and no `now()`, random values or
   network. Examples that hit a live API go in `examples`, not `executable_examples`.
-- **Credentials.** Read them from a DuckDB secret first (`CREATE SECRET (TYPE prometheus_api, …)`),
-  then from an environment variable. Never put them in logs, examples or the repo, and
+- **Credentials.** Read them from the `prometheus` DuckDB secret
+  (`CREATE SECRET (TYPE prometheus, BASE_URL …)`), never from environment variables. Never put them in logs, examples or the repo, and
   keep them out of table-function state unless the state rule above says
   the SDK encrypts it. Workers that need real credentials set `execute: false` on the metadata check.
 - **Errors.** Raise errors with a clear message. For HTTP failures, include the status
@@ -188,7 +195,7 @@ v0.42.x speaks the same protocol). See
 ## Useful prompts
 
 - "Add a scalar `slugify(text VARCHAR) -> VARCHAR` with full metadata and tests."
-- "Replace `fetch_items` with a table function for <API>. Map its JSON to typed columns,
-  read the token from a `prometheus_api` secret, and add mock-server tests."
+- "Add a `query_exemplars(promql, start_date, end_date)` table function for /api/v1/query_exemplars,
+  record its fixture responses with `PROMETHEUS_RECORD_UPSTREAM`, and add SQL tests."
 - "Add a catalog table `countries` (code, name) with a primary key, following
   `examples/catalog_tables`."
