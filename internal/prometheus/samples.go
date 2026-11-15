@@ -245,7 +245,7 @@ func (*SamplesFunc) NewState(params *vgi.ProcessParams) (*SamplesState, error) {
 		w.lowerHi(args.EndDate.UnixMilli())
 	}
 	if w.Lo == nil {
-		return nil, fmt.Errorf("samples needs a time range: add WHERE ts >= TIMESTAMPTZ '...' (and optionally ts < ...), or pass start_date := ...")
+		return nil, fmt.Errorf("samples needs a time range: add WHERE ts >= TIMESTAMPTZ '...' (and optionally ts < ...), or pass start_date := TIMESTAMPTZ '...'")
 	}
 	st.StartMs = *w.Lo
 	if w.Hi != nil {

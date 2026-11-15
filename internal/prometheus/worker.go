@@ -1,7 +1,7 @@
-// Package prometheus assembles the example functions into a catalog.
+// Package prometheus exposes the Prometheus HTTP API (and PromQL tools) as a VGI catalog.
 //
-// To add a function: write it (see greet.go / sequence.go / fetch_items.go),
-// then register it in NewWorker below.
+// To add a function: write it (see query.go, samples.go, catalog_funcs.go or
+// compute.go), then register it in NewWorker below.
 //
 // Run it:
 //
@@ -20,9 +20,10 @@ import (
 
 // allExamples lists every function's examples for the schema-level tag.
 func allExamples() []exampleQuery {
-	return exampleQueries(queryExamples, queryRangeExamples, samplesExamples, seriesExamples,
+	lists := [][]vgi.CatalogExample{queryExamples, queryRangeExamples, samplesExamples, seriesExamples,
 		labelNamesExamples, labelValuesExamples, metadataExamples, targetsExamples, rulesExamples,
-		alertsExamples, alertmanagersExamples, tsdbExamples, buildInfoExamples)
+		alertsExamples, alertmanagersExamples, tsdbExamples, buildInfoExamples}
+	return exampleQueries(append(lists, toolsExamples()...)...)
 }
 
 // NewWorker builds the worker: one catalog, one main schema. Extra options
@@ -47,5 +48,6 @@ func NewWorker(opts ...vgi.WorkerOption) *vgi.Worker {
 		newTargets(), newRules(), newAlerts(), newAlertmanagers(), newTSDBStatus(), newBuildInfo()} {
 		w.RegisterTable(f)
 	}
+	registerTools(w)
 	return w
 }

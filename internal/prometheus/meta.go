@@ -38,6 +38,7 @@ var SchemaCategories = []category{
 	{Name: "query", Title: "PromQL Queries", Description: "Evaluate arbitrary PromQL at an instant or over a range."},
 	{Name: "samples", Title: "Samples", Description: "Typed metric samples with SQL filter pushdown into PromQL selectors."},
 	{Name: "metadata", Title: "Series Metadata", Description: "Series, label names, label values and metric metadata (type, help, unit)."},
+	{Name: "promql", Title: "PromQL Tools", Description: "Offline PromQL validation, formatting, metric extraction and duration parsing (no server)."},
 	{Name: "status", Title: "Server Status", Description: "Scrape targets, rules, alerts, Alertmanagers, TSDB cardinality and build info."},
 }
 

@@ -476,3 +476,39 @@ statement error
 SELECT * FROM prometheus.main.build_info(secret_name := 'bad_url');
 ----
 http(s) URL
+
+# ------------------------------------------------------------------ PromQL tools (no server)
+
+query TTTT
+SELECT e, prometheus.main.is_valid(e), prometheus.main.parse_error(e), prometheus.main.format_expr(e)
+FROM (VALUES ('rate(x[5m])'), ('sum(rate(x[5m])'), ('sum(rate(http_requests_total[5m]))by(job)'), (NULL)) t(e) ORDER BY e NULLS LAST;
+----
+rate(x[5m])	true	NULL	rate(x[5m])
+sum(rate(http_requests_total[5m]))by(job)	true	NULL	sum by (job) (rate(http_requests_total[5m]))
+sum(rate(x[5m])	false	1:16: parse error: unclosed left parenthesis	NULL
+NULL	NULL	NULL	NULL
+
+query T
+SELECT prometheus.main.metric_names('sum(rate(errors_total[5m])) / sum(rate(requests_total[5m])) or {__name__="errors_total"} or {__name__=~"x|y"}');
+----
+[errors_total, requests_total]
+
+query T
+SELECT prometheus.main.metric_names('rate(');
+----
+NULL
+
+query TR
+SELECT d, prometheus.main.duration_seconds(d) FROM (VALUES ('1h30m'), ('250ms'), ('1w'), ('soon'), (NULL)) t(d) ORDER BY d NULLS LAST;
+----
+1h30m	5400.0
+1w	604800.0
+250ms	0.25
+soon	NULL
+NULL	NULL
+
+# The tools compose with the live tables: every recorded rule parses.
+query I
+SELECT count(*) FROM prometheus.main.rules() WHERE NOT prometheus.main.is_valid(query);
+----
+0
