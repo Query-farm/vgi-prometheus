@@ -126,40 +126,46 @@ func withExamples(tags map[string]string, lists ...[]vgi.CatalogExample) map[str
 	return tags
 }
 
-const catalogDocLLM = "An example VGI worker generated from the Query.Farm starter template. It " +
-	"shows the three shapes most workers need: a vectorized scalar function with an overload, a " +
-	"deterministic table function with a named default argument, and a table function that pages " +
-	"through a REST API with retries and an optional bearer token taken from a DuckDB secret or an " +
-	"environment variable. Replace them with your own functions; keep the metadata complete so " +
-	"agents can discover and call them."
+const catalogDocLLM = "Query any Prometheus-compatible HTTP API (Prometheus, Thanos, Cortex/Mimir, VictoriaMetrics, " +
+	"Grafana Cloud, Amazon Managed Prometheus through a bearer token proxy) from SQL. Every API function needs a " +
+	"DuckDB secret: CREATE SECRET (TYPE prometheus, BASE_URL 'http://host:9090', BEARER_TOKEN or USERNAME/PASSWORD, " +
+	"optional TENANT_ID sent as X-Scope-OrgID, optional EXTRA_HEADERS as a JSON object). " +
+	"query(promql, time := ...) is an instant query; query_range(promql, start, end, step_seconds) evaluates at a fixed " +
+	"step, split into requests under the 11,000-point limit; both return long rows (metric, job, instance, labels map, " +
+	"ts, value, histogram). samples(metric) returns stored samples with SQL label and ts filters pushed into the PromQL " +
+	"selector and request window. series, label_names, label_values and metric_metadata read series metadata; targets, " +
+	"rules, alerts, alertmanagers, tsdb_status and build_info read server status. is_valid, parse_error, format_expr, " +
+	"metric_names and duration_seconds run the PromQL parser locally with no server. All functions are read-only."
 
-// CatalogDocMD is the catalog's long human-facing description (also its comment).
-const CatalogDocMD = "# VGI prometheus worker\n\n" +
-	"**An example [VGI](https://query.farm/vgi) worker that brings custom functions into DuckDB " +
-	"SQL.** It was generated from the Query.Farm starter template and is meant to be renamed and " +
-	"rewritten: every function here demonstrates one pattern you will reuse, from vectorized scalars " +
-	"and streaming table functions to a REST API reader that retries politely and reads a bearer " +
-	"token from a DuckDB secret or the environment.\n\n" +
-	"The worker speaks Apache Arrow to DuckDB over stdin/stdout, a Unix socket, or HTTP, so the " +
-	"same code runs as a local subprocess or a hosted service. See the " +
-	"[VGI documentation](https://query.farm/vgi/docs/) to learn more."
+// CatalogDocMD is the catalog's comment: one short paragraph for directories.
+const CatalogDocMD = "Query Prometheus-compatible HTTP APIs (Prometheus, Thanos, Mimir, VictoriaMetrics, Grafana Cloud) " +
+	"from DuckDB: PromQL instant and range queries, typed samples with filter pushdown, series metadata, " +
+	"server status and offline PromQL tools."
 
-const schemaDocLLM = "The `main` schema holds the starter template's example functions, one per common worker " +
-	"pattern. `greet(name)` and `greet(name, style)` are vectorized scalars: use them inside a " +
-	"projection or predicate, one result per row; `style` is a constant that must be 'casual' or " +
-	"'formal'. `sequence_table(count, step := 1)` is a deterministic table function that returns " +
-	"`count` rows of `(n, squared)`; use it for demos, tests, and as a template for generators. " +
-	"`fetch_items(base_url, page_size := 100)` reads every item from a paginated JSON REST API as " +
-	"`(id, name, category, price)` rows, streaming one page per batch, retrying rate-limited " +
-	"requests, and authenticating with a `prometheus_api` DuckDB secret or the `PROMETHEUS_API_TOKEN` " +
-	"environment variable. Scalars cannot take named arguments; table functions can."
+const catalogDocMDLong = "# Prometheus in DuckDB\n\n" +
+	"Run PromQL against any Prometheus-compatible HTTP API and get typed rows back: labels as a " +
+	"`MAP` of label names to values plus hoisted `metric`, `job` and `instance` columns, `TIMESTAMPTZ` times and " +
+	"`DOUBLE` values (NaN and Inf kept), with native histograms as a typed struct.\n\n" +
+	"- **query / query_range**: arbitrary PromQL; long ranges are split under the 11,000-point limit without changing the step.\n" +
+	"- **samples**: one metric's samples; SQL filters on labels and `ts` become PromQL matchers and the request window.\n" +
+	"- **Metadata and status**: series, label names and values, metric metadata, targets, rules, alerts, Alertmanagers, TSDB cardinality, build info.\n" +
+	"- **PromQL tools**: validate, explain, canonicalize and audit PromQL with no server.\n\n" +
+	"Credentials come from a `prometheus` DuckDB secret (bearer token or basic auth, optional tenant header)."
+
+const schemaDocLLM = "The main schema holds every function. Table functions that call the server take an optional " +
+	"secret_name named argument (default: the prometheus secret whose scope matches). Time arguments are named " +
+	"start_date/end_date (query_range takes them positionally) and step arguments step_seconds. Rows are long: one row " +
+	"per series and timestamp. Read a label with labels['name'] or, in samples, list it in label_columns to get a " +
+	"pushdown column. Scalars (is_valid, parse_error, format_expr, metric_names, duration_seconds) take one `VARCHAR` " +
+	"column and need no secret."
 
 // SchemaDocMD is the main schema's human-facing description (also its comment).
 const SchemaDocMD = "## main\n\n" +
-	"The starter template's example functions, one per common worker pattern.\n\n" +
-	"- **Scalars** answer one question per row and slot into a projection or predicate.\n" +
-	"- **Table functions** return sets of rows, streamed to DuckDB in Arrow batches.\n" +
-	"- **REST readers** page through an HTTP API and authenticate with a DuckDB secret."
+	"Everything this worker exposes lives here. Table functions call the Prometheus HTTP API named by a " +
+	"`prometheus` secret and return long rows (one per series and timestamp); scalars run the PromQL parser " +
+	"locally.\n\n" +
+	"Reach for `samples` when you want SQL filters pushed into the PromQL selector, and for the " +
+	"query functions when you need arbitrary PromQL such as `rate()` or aggregations."
 
 // agentTask is one public analyst task for `vgi-lint simulate`.
 type agentTask struct {
@@ -167,27 +173,41 @@ type agentTask struct {
 	Prompt string `json:"prompt"`
 }
 
-// agentTestTasks are graded privately by vgi-agent-tests.yaml.
+// agentTestTasks are graded privately by vgi-agent-tests.yaml. The API tasks
+// assume a prometheus secret pointing at the fixture (test/fixture_server).
 var agentTestTasks = []agentTask{
-	{Name: "formal_greeting", Prompt: "Using the prometheus worker, greet the name 'Grace' formally."},
-	{Name: "sum_of_squares", Prompt: "Using the prometheus worker, what is the sum of the squared column for the first 10 rows " +
-		"of the sequence with the default step?"},
-	{Name: "stepped_sequence", Prompt: "List the n values of a 4-row sequence that steps by 5, in ascending order."},
-	{Name: "items_per_category", Prompt: "The items API is running at https://vgi-starter-api.query-farm.services/v1. How many items does it have in each category?"},
+	{Name: "broken_expressions", Prompt: "Using the prometheus worker, which of these PromQL expressions do not parse: " +
+		"'rate(x[5m])', 'sum(rate(x[5m])', 'up == 1', 'avg by (job (up)'? Return each broken one with the parser's error message."},
+	{Name: "canonical_form", Prompt: "Using the prometheus worker, give the canonical form of the PromQL 'sum(rate(http_requests_total[5m]))by(job)'."},
+	{Name: "rule_metrics", Prompt: "Using the prometheus worker, which metric names does the expression " +
+		"'sum(rate(errors_total[5m])) / sum(rate(requests_total[5m]))' read?"},
+	{Name: "duration", Prompt: "Using the prometheus worker, how many seconds is the Prometheus duration '1h30m'?"},
+	{Name: "temperature_at", Prompt: "What was fixture_temperature_celsius for each instance at 2026-01-01 00:15:00 UTC?"},
+	{Name: "hourly_range", Prompt: "Evaluate fixture_temperature_celsius every 60 seconds from 2026-01-01 00:00 to 06:00 UTC: how many points per instance?"},
+	{Name: "raw_sample_count", Prompt: "How many raw stored samples does fixture_temperature_celsius have for instance node-a:9100 between 2026-01-01 00:00 (inclusive) and 01:00 UTC (exclusive)?"},
+	{Name: "fixture_series", Prompt: "How many series does job 'fixture' have per metric name between 2026-01-01 00:00 and 06:00 UTC?"},
+	{Name: "fixture_labels", Prompt: "Which label names does fixture_temperature_celsius have between 2026-01-01 00:00 and 06:00 UTC?"},
+	{Name: "fixture_instances", Prompt: "Which instance values does fixture_temperature_celsius have between 2026-01-01 00:00 and 06:00 UTC?"},
+	{Name: "metric_help", Prompt: "What type and help text does the metric prometheus_http_requests_total have?"},
+	{Name: "down_targets", Prompt: "Which scrape pools have a target that is down?"},
+	{Name: "alerting_rules", Prompt: "List the alerting rules with their 'for' duration in seconds."},
+	{Name: "firing_alerts", Prompt: "Which alerts are currently firing?"},
+	{Name: "alertmanager_urls", Prompt: "Which Alertmanagers does the server send alerts to?"},
+	{Name: "head_series", Prompt: "How many series are in the TSDB head block?"},
+	{Name: "server_version", Prompt: "Which Prometheus version is the server running?"},
 }
-
 // CatalogTags are the catalog-level discovery tags.
 var CatalogTags = map[string]string{
 	"vgi.title":              "VGI Prometheus Worker",
-	"vgi.subtitle":           "Example DuckDB functions to rename and replace: a scalar, a table function and a REST API reader.",
+	"vgi.subtitle":           "PromQL queries, typed samples with pushdown, metadata and server status from any Prometheus-compatible API.",
 	"vgi.doc_llm":            catalogDocLLM,
-	"vgi.doc_md":             CatalogDocMD,
+	"vgi.doc_md":             catalogDocMDLong,
 	"vgi.source_url":         SourceURL,
 	"vgi.icon_url":           "https://query.farm/media-kit/products/vgi/vgi-logo.png",
 	"vgi.license":            "0BSD",
 	"vgi.author":             "Query.Farm",
-	"vgi.copyright":          "Copyright 2026 Query.Farm LLC",
-	"vgi.keywords":           keywordsArray("vgi, duckdb, starter template, example worker, rest api, table function"),
+	"vgi.copyright":          "Copyright 2026 Query Farm LLC - https://query.farm",
+	"vgi.keywords":           keywordsArray("prometheus, promql, metrics, time series, observability, thanos, mimir, victoriametrics, grafana cloud, monitoring"),
 	"vgi.support_contact":    SourceURL + "/issues",
 	"vgi.support_policy_url": SourceURL + "#support",
 	// Public analyst tasks for `vgi-lint simulate`; private graders live in vgi-agent-tests.yaml.
@@ -198,8 +218,8 @@ var CatalogTags = map[string]string{
 func schemaTags(allExamples []exampleQuery) map[string]string {
 	return map[string]string{
 		"vgi.title":           "Prometheus Functions",
-		"domain":              "examples",
-		"vgi.keywords":        keywordsArray("greeting, sequence, generator, rest api, pagination"),
+		"domain":              "observability",
+		"vgi.keywords":        keywordsArray("promql, query_range, samples, series, labels, targets, rules, alerts, tsdb"),
 		"vgi.doc_llm":         schemaDocLLM,
 		"vgi.doc_md":          SchemaDocMD,
 		"vgi.categories":      mustJSON(SchemaCategories),

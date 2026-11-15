@@ -96,8 +96,11 @@ jobs:
           location: ${{ github.workspace }}/bin/vgi-prometheus-worker
           # Set in vgi-lint.toml, so local runs and CI agree.
           fail-on: ${{ steps.lintcfg.outputs.fail_on }}
-          # Set to false if your examples need real credentials or network access.
-          execute: true
+          # Credential-gated: every table function (prometheus.main.query, query_range,
+          # samples, series, ..., build_info) needs a `prometheus` secret (BASE_URL plus
+          # a bearer token or basic auth) for a live Prometheus server, so examples are
+          # not executed here. The offline scalars are covered by the SQL tests.
+          execute: "false"
 
   docker:
     name: Docker image smoke test

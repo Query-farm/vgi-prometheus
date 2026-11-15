@@ -21,7 +21,7 @@ const DefaultMaxPoints = 11000
 
 type queryArgs struct {
 	Promql     string     `vgi:"pos=0,doc=PromQL expression, e.g. 'sum by (job) (rate(http_requests_total[5m]))'."`
-	AtTime     *time.Time `vgi:"name=time,doc=Evaluation time (TIMESTAMPTZ). Omit or NULL for the server's current time."`
+	AtTime     *time.Time `vgi:"name=time,doc=Evaluation time. Omit or NULL for the server's current time."`
 	SecretName *string    `vgi:"name=secret_name,doc=Name of the prometheus secret to use when several exist; default: the unscoped one."`
 }
 
@@ -56,16 +56,15 @@ func (*QueryFunc) Metadata() vgi.FunctionMetadata {
 		Category: "query",
 		Keywords: "promql, instant query, prometheus, thanos, mimir, victoriametrics, metrics, /api/v1/query",
 		DocLLM: "Evaluate a PromQL expression at one instant (GET /api/v1/query) and return one row per " +
-			"result series. Positional arg: the PromQL text. Named args: time (TIMESTAMPTZ; omitted = now on the server), " +
+			"result series. Positional arg: the PromQL text. Named args: time (`TIMESTAMPTZ`; omitted = now on the server), " +
 			"secret_name (pick a named prometheus secret). Columns: result_type ('vector', 'matrix', 'scalar' or 'string'), " +
-			"metric (__name__), job, instance, labels MAP(VARCHAR,VARCHAR) with every label, ts TIMESTAMPTZ, value DOUBLE " +
-			"(NaN/+Inf/-Inf preserved; NULL for histograms/strings), histogram STRUCT for native histograms, string_value. " +
+			"metric (__name__), job, instance, labels `MAP(VARCHAR,VARCHAR)` with every label, ts `TIMESTAMPTZ`, value `DOUBLE` " +
+			"(NaN/+Inf/-Inf preserved; NULL for histograms/strings), histogram `STRUCT` for native histograms, string_value. " +
 			"A range selector such as 'up[5m]' returns raw samples as matrix rows. Aggregations like sum() drop __name__, so " +
 			"metric is NULL; read grouping labels from labels['name']. Needs a prometheus secret (CREATE SECRET (TYPE prometheus, BASE_URL '...')).",
 		DocMD: "## query(promql, time := NULL)\n\n" +
-			"Instant PromQL evaluation (`/api/v1/query`). One row per result series; scalar and string results become one row.\n\n" +
-			"```sql\nCREATE SECRET (TYPE prometheus, BASE_URL 'http://localhost:9090');\n" +
-			"SELECT labels['job'] AS job, value FROM prometheus.main.query('sum by (job) (up)');\n```",
+			"Instant PromQL evaluation (`/api/v1/query`). One row per result series; scalar and string results become one row. " +
+			"Native histograms fill the `histogram` struct and leave `value` NULL.",
 	})
 	tags["vgi.result_columns_schema"] = mustJSON(resultColumnsOf(queryColumns))
 	return vgi.FunctionMetadata{
@@ -133,8 +132,8 @@ func (*QueryFunc) Process(ctx context.Context, params *vgi.ProcessParams, st *Qu
 
 type queryRangeArgs struct {
 	Promql            string    `vgi:"pos=0,doc=PromQL expression evaluated at every step."`
-	StartDate         time.Time `vgi:"pos=1,doc=First evaluation time (TIMESTAMPTZ)."`
-	EndDate           time.Time `vgi:"pos=2,doc=Last evaluation time (TIMESTAMPTZ); inclusive."`
+	StartDate         time.Time `vgi:"pos=1,doc=First evaluation time."`
+	EndDate           time.Time `vgi:"pos=2,doc=Last evaluation time; inclusive."`
 	StepSeconds       float64   `vgi:"pos=3,gt=0,doc=Resolution step in seconds (e.g. 60). Never changed by the worker."`
 	MaxPointsPerChunk int64     `vgi:"default=11000,ge=1,le=11000,doc=Evaluation points per request; long ranges are split into chunks of this many steps (Prometheus rejects more than 11000)."`
 	SecretName        *string   `vgi:"name=secret_name,doc=Name of the prometheus secret to use when several exist."`
@@ -175,8 +174,8 @@ func (*QueryRangeFunc) Metadata() vgi.FunctionMetadata {
 		Category: "query",
 		Keywords: "promql, range query, time series, prometheus, step, resolution, /api/v1/query_range, chunking",
 		DocLLM: "Evaluate a PromQL expression at every step between two times (/api/v1/query_range) and return long-format " +
-			"rows: one per series per step. Positional args: promql, start (TIMESTAMPTZ), end (TIMESTAMPTZ, inclusive), " +
-			"step_seconds (DOUBLE > 0). Named: max_points_per_chunk (default 11000), secret_name. Ranges longer than the " +
+			"rows: one per series per step. Positional args: promql, start (`TIMESTAMPTZ`), end (inclusive), " +
+			"step_seconds (`DOUBLE` > 0). Named: max_points_per_chunk (default 11000), secret_name. Ranges longer than the " +
 			"server's 11,000-points-per-series limit are split into consecutive chunks automatically; the step is never " +
 			"changed, so a chunked pull returns exactly the rows an unchunked one would. Same columns as query(); result_type is 'matrix'. " +
 			"Use query() for a single instant and samples() for raw stored samples with SQL filter pushdown.",

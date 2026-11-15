@@ -37,10 +37,10 @@ import (
 
 type samplesArgs struct {
 	Metric            string     `vgi:"pos=0,doc=Metric name (e.g. 'node_load1') or a full series selector (e.g. 'up{job=\"api\"}'); SQL filters add matchers to it."`
-	LabelColumns      string     `vgi:"name=label_columns,default=,doc=Comma-separated label names to expose as their own VARCHAR columns (in addition to metric/job/instance) so they can be filtered and pushed down, e.g. 'env,region'."`
+	LabelColumns      string     `vgi:"name=label_columns,default=,doc=Comma-separated label names to expose as their own columns (in addition to metric/job/instance) so they can be filtered and pushed down, e.g. 'env,region'."`
 	StepSeconds       float64    `vgi:"name=step_seconds,default=0,ge=0,doc=0 (default) returns raw stored samples; > 0 evaluates the selector at this fixed step (query_range)."`
-	StartDate         *time.Time `vgi:"name=start_date,doc=Window start (TIMESTAMPTZ) when not given by a WHERE ts >= ... predicate."`
-	EndDate           *time.Time `vgi:"name=end_date,doc=Window end (TIMESTAMPTZ, inclusive) when not given by WHERE ts <= ...; default: now."`
+	StartDate         *time.Time `vgi:"name=start_date,doc=Window start when not given by a WHERE ts >= ... predicate."`
+	EndDate           *time.Time `vgi:"name=end_date,doc=Window end (inclusive) when not given by WHERE ts <= ...; default: now."`
 	ChunkSeconds      int64      `vgi:"name=chunk_seconds,default=3600,ge=1,doc=Raw mode: seconds of data fetched per request."`
 	MaxPointsPerChunk int64      `vgi:"name=max_points_per_chunk,default=11000,ge=1,le=11000,doc=Step mode: evaluation points per request (Prometheus rejects more than 11000)."`
 	SecretName        *string    `vgi:"name=secret_name,doc=Name of the prometheus secret to use when several exist."`
@@ -89,20 +89,18 @@ func (*SamplesFunc) Metadata() vgi.FunctionMetadata {
 		Category: "samples",
 		Keywords: "samples, raw samples, time series, filter pushdown, selector, label matcher, promql, metric, export",
 		DocLLM: "Read one metric's samples as typed rows, with SQL WHERE filters pushed down. Positional arg: metric name or " +
-			"series selector. Named: label_columns (comma-separated labels to expose as VARCHAR columns, e.g. 'env,region'), " +
+			"series selector. Named: label_columns (comma-separated labels to expose as `VARCHAR` columns, e.g. 'env,region'), " +
 			"step_seconds (0 = raw stored samples, default; > 0 = evaluate at a fixed step), start_date/end_date (alternative to a WHERE ts range), " +
 			"chunk_seconds (raw mode request size, default 3600), max_points_per_chunk (step mode, default 11000), secret_name. " +
-			"Columns: metric, job, instance, one column per label_columns entry, labels MAP(VARCHAR,VARCHAR), ts TIMESTAMPTZ, value DOUBLE, " +
+			"Columns: metric, job, instance, one column per label_columns entry, labels `MAP(VARCHAR,VARCHAR)`, ts `TIMESTAMPTZ`, value `DOUBLE`, " +
 			"histogram (native histograms). Pushdown: =, <>, IN, IS [NOT] NULL, LIKE/ILIKE, prefix/suffix/contains and regexp_matches on " +
 			"metric/job/instance/label columns become PromQL label matchers; ts comparisons/BETWEEN become the request window. " +
 			"A lower time bound is required (WHERE ts >= ... or start_date :=). Filters on labels['x'] are applied in DuckDB, so list the label in label_columns to push it.",
 		DocMD: "## samples(metric, label_columns := '', step_seconds := 0, ...)\n\n" +
 			"Typed rows for one metric. SQL filters on label columns compile into the PromQL selector and `ts` ranges into the " +
-			"request window; every filter is also re-applied exactly by the worker, so results always match the SQL.\n\n" +
-			"```sql\nSELECT instance, ts, value FROM prometheus.main.samples('node_load1')\n" +
-			"WHERE job = 'node' AND ts >= now() - INTERVAL 1 HOUR;\n```",
+			"request window; every filter is also re-applied exactly by the worker, so results always match the SQL. " +
+			"A lower time bound is required (`WHERE ts >= ...` or `start_date :=`).",
 	})
-	tags["vgi.result_columns_schema"] = mustJSON(resultColumnsOf(samplesColumns(nil)))
 	tags["vgi.result_dynamic_columns_md"] = "The result always has `metric`, `job`, `instance`, then one `VARCHAR` column per name in " +
 		"`label_columns` (in the order given), then `labels`, `ts`, `value` and `histogram`.\n\n" +
 		"| Name | Type | Description |\n|---|---|---|\n" +

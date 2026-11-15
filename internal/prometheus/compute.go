@@ -38,7 +38,7 @@ type exprArgs struct {
 }
 
 type durationArgs struct {
-	Duration *array.String `vgi:"pos=0,const=false,doc=Prometheus duration such as '30s', '5m', '1h30m', '2d' or '1w'. NULL or an invalid duration gives NULL."`
+	Duration *array.String `vgi:"pos=0,const=false,doc=A Prometheus duration string, for example 1h30m. NULL or an invalid duration gives NULL."`
 }
 
 // executableExample is one vgi.executable_examples entry.

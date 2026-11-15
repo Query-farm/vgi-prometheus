@@ -87,8 +87,8 @@ func hoisted(m map[string]string) []any {
 
 type seriesArgs struct {
 	Match      string     `vgi:"pos=0,doc=Series selector, e.g. 'up' or '{job=\"api\"}'."`
-	StartDate  *time.Time `vgi:"name=start_date,doc=Only series with samples after this time (TIMESTAMPTZ)."`
-	EndDate    *time.Time `vgi:"name=end_date,doc=Only series with samples before this time (TIMESTAMPTZ)."`
+	StartDate  *time.Time `vgi:"name=start_date,doc=Only series with samples after this time."`
+	EndDate    *time.Time `vgi:"name=end_date,doc=Only series with samples before this time."`
 	SecretName *string    `vgi:"name=secret_name,doc=Name of the prometheus secret to use when several exist."`
 }
 
@@ -109,7 +109,7 @@ func newSeries() vgi.TableFunction {
 		columns: seriesColumns,
 		meta: meta("Series Matching A Selector", "metadata", "series, cardinality, label sets, /api/v1/series, selector, match",
 			"List every series (label set) matching a selector, via /api/v1/series. Positional arg: the selector (e.g. '{job=\"api\"}'). "+
-				"Named: start_date, end_date (TIMESTAMPTZ; default: the server's recent window), secret_name. Columns: metric, job, instance, labels MAP. "+
+				"Named: start_date, end_date (`TIMESTAMPTZ`; default: the server's recent window), secret_name. Columns: metric, job, instance, labels `MAP`. "+
 				"Use it for cardinality audits (GROUP BY metric / labels['x']) without fetching samples.",
 			"## series(match, start_date := NULL, end_date := NULL)\n\nEvery series matching a selector, one row per label set.",
 			"List the series (label sets) that match a selector in a time window", seriesColumns, seriesExamples),
@@ -137,8 +137,8 @@ func newSeries() vgi.TableFunction {
 
 type labelNamesArgs struct {
 	Match      *string    `vgi:"name=match,doc=Optional series selector restricting which series' labels are listed."`
-	StartDate  *time.Time `vgi:"name=start_date,doc=Window start (TIMESTAMPTZ)."`
-	EndDate    *time.Time `vgi:"name=end_date,doc=Window end (TIMESTAMPTZ)."`
+	StartDate  *time.Time `vgi:"name=start_date,doc=Window start."`
+	EndDate    *time.Time `vgi:"name=end_date,doc=Window end."`
 	SecretName *string    `vgi:"name=secret_name,doc=Name of the prometheus secret to use when several exist."`
 }
 
@@ -193,8 +193,8 @@ func stringRows(data json.RawMessage) ([][]any, error) {
 type labelValuesArgs struct {
 	Label      string     `vgi:"pos=0,doc=Label name, e.g. 'job' or '__name__' (metric names)."`
 	Match      *string    `vgi:"name=match,doc=Optional series selector restricting which series' values are listed."`
-	StartDate  *time.Time `vgi:"name=start_date,doc=Window start (TIMESTAMPTZ)."`
-	EndDate    *time.Time `vgi:"name=end_date,doc=Window end (TIMESTAMPTZ)."`
+	StartDate  *time.Time `vgi:"name=start_date,doc=Window start."`
+	EndDate    *time.Time `vgi:"name=end_date,doc=Window end."`
 	SecretName *string    `vgi:"name=secret_name,doc=Name of the prometheus secret to use when several exist."`
 }
 

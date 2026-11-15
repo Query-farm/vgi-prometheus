@@ -1,16 +1,62 @@
 # Private graders for the public vgi.agent_test_tasks in the worker's catalog metadata.
 # `vgi-lint lint --ai` runs an agent on each prompt and grades it with check_sql.
 # See https://github.com/Query-farm/vgi-lint-check (VGI920).
+#
+# The PromQL-tool tasks need nothing. Every other task reads a Prometheus server
+# and assumes a `prometheus` secret whose BASE_URL is the replay fixture
+# (python3 test/fixture_server/server.py) or the live fixture
+# (test/fixture/run-prometheus.sh); CI cannot run them (execute: false).
 tasks:
-  - name: formal_greeting
-    reference_sql: SELECT prometheus.main.greet('Grace', 'formal') AS greeting
-  - name: sum_of_squares
-    reference_sql: SELECT sum(squared) AS total FROM prometheus.main.sequence_table(10)
-  - name: stepped_sequence
-    reference_sql: SELECT n FROM prometheus.main.sequence_table(4, step := 5) ORDER BY n
-  # Reads the public demo API (https://vgi-starter-api.query-farm.services/v1).
-  - name: items_per_category
+  - name: broken_expressions
+    reference_sql: >-
+      SELECT e, prometheus.main.parse_error(e) AS problem
+      FROM (VALUES ('rate(x[5m])'), ('sum(rate(x[5m])'), ('up == 1'), ('avg by (job (up)')) t(e)
+      WHERE NOT prometheus.main.is_valid(e) ORDER BY e
+  - name: canonical_form
+    reference_sql: SELECT prometheus.main.format_expr('sum(rate(http_requests_total[5m]))by(job)') AS canonical
+  - name: rule_metrics
+    reference_sql: SELECT prometheus.main.metric_names('sum(rate(errors_total[5m])) / sum(rate(requests_total[5m]))') AS metrics
+  - name: duration
+    reference_sql: SELECT prometheus.main.duration_seconds('1h30m') AS seconds
+  - name: temperature_at
+    reference_sql: >-
+      SELECT instance, value FROM prometheus.main.query('fixture_temperature_celsius',
+        time := TIMESTAMPTZ '2026-01-01 00:15:00+00') ORDER BY instance
+  - name: hourly_range
+    reference_sql: >-
+      SELECT instance, count(*) AS points FROM prometheus.main.query_range('fixture_temperature_celsius',
+        TIMESTAMPTZ '2026-01-01 00:00:00+00', TIMESTAMPTZ '2026-01-01 06:00:00+00', 60) GROUP BY instance ORDER BY instance
+  - name: raw_sample_count
+    reference_sql: >-
+      SELECT count(*) AS samples FROM prometheus.main.samples('fixture_temperature_celsius')
+      WHERE instance = 'node-a:9100' AND ts >= TIMESTAMPTZ '2026-01-01 00:00:00+00' AND ts < TIMESTAMPTZ '2026-01-01 01:00:00+00'
+  - name: fixture_series
+    reference_sql: >-
+      SELECT metric, count(*) AS series FROM prometheus.main.series('{job="fixture"}',
+        start_date := TIMESTAMPTZ '2026-01-01 00:00:00+00', end_date := TIMESTAMPTZ '2026-01-01 06:00:00+00')
+      GROUP BY metric ORDER BY metric
+  - name: fixture_labels
+    reference_sql: >-
+      SELECT label FROM prometheus.main.label_names(match := 'fixture_temperature_celsius',
+        start_date := TIMESTAMPTZ '2026-01-01 00:00:00+00', end_date := TIMESTAMPTZ '2026-01-01 06:00:00+00') ORDER BY label
+  - name: fixture_instances
+    reference_sql: >-
+      SELECT value FROM prometheus.main.label_values('instance', match := 'fixture_temperature_celsius',
+        start_date := TIMESTAMPTZ '2026-01-01 00:00:00+00', end_date := TIMESTAMPTZ '2026-01-01 06:00:00+00') ORDER BY value
+  - name: metric_help
+    reference_sql: SELECT type, help FROM prometheus.main.metric_metadata(metric := 'prometheus_http_requests_total')
+  - name: down_targets
+    reference_sql: SELECT DISTINCT scrape_pool FROM prometheus.main.targets() WHERE health = 'down' ORDER BY scrape_pool
+  - name: alerting_rules
+    reference_sql: >-
+      SELECT rule_name, duration_seconds FROM prometheus.main.rules(rule_type := 'alert') ORDER BY rule_name
+  - name: firing_alerts
     check_sql: >-
-      SELECT count(*) = 3 AND sum(items) = 25
-      FROM (SELECT category, count(*) AS items
-            FROM prometheus.main.fetch_items('https://vgi-starter-api.query-farm.services/v1') GROUP BY category)
+      SELECT bool_or(alert_name = 'FixtureAlwaysFiring') FROM prometheus.main.alerts() WHERE state = 'firing'
+  - name: alertmanager_urls
+    reference_sql: SELECT url FROM prometheus.main.alertmanagers() ORDER BY url
+  - name: head_series
+    check_sql: >-
+      SELECT count(*) = 1 FROM prometheus.main.tsdb_status() WHERE section = 'head' AND name = 'num_series'
+  - name: server_version
+    reference_sql: SELECT version FROM prometheus.main.build_info()
