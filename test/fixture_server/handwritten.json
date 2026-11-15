@@ -1,0 +1,26 @@
+{
+ "/api/v1/query?query=fixture_native&time=1767226500": {
+  "body": "{\"status\": \"success\", \"data\": {\"resultType\": \"vector\", \"result\": [{\"metric\": {\"__name__\": \"fixture_native\", \"job\": \"native\"}, \"histogram\": [1767226500, {\"count\": \"10\", \"sum\": \"3.5\", \"buckets\": [[0, \"0.5\", \"1\", \"4\"], [3, \"1\", \"2\", \"6\"]]}]}, {\"metric\": {\"__name__\": \"fixture_native\", \"job\": \"float\"}, \"value\": [1767226500, \"7\"]}]}}",
+  "status": 200
+ },
+ "/api/v1/query?query=fixture_proxy_error&time=1767226500": {
+  "body": "<html>Bad Gateway</html>",
+  "status": 502
+ },
+ "/api/v1/query?query=fixture_too_many_samples&time=1767226500": {
+  "body": "{\"status\": \"error\", \"errorType\": \"execution\", \"error\": \"query processing would load too many samples into memory in query execution\"}",
+  "status": 422
+ },
+ "/api/v1/query?query=fixture_unavailable&time=1767226500": {
+  "body": "{\"status\": \"error\", \"errorType\": \"unavailable\", \"error\": \"fixture outage\"}",
+  "status": 503
+ },
+ "/api/v1/query?query=fixture_warn&time=1767226500": {
+  "body": "{\"status\": \"success\", \"data\": {\"resultType\": \"vector\", \"result\": [{\"metric\": {\"job\": \"w\"}, \"value\": [1767226500.123, \"1\"]}]}, \"warnings\": [\"fixture warning: results may be incomplete\"]}",
+  "status": 200
+ },
+ "/api/v1/query_range?end=1767226560&query=fixture_native&start=1767226500&step=30": {
+  "body": "{\"status\": \"success\", \"data\": {\"resultType\": \"matrix\", \"result\": [{\"metric\": {\"__name__\": \"fixture_native\", \"job\": \"mixed\"}, \"values\": [[1767226530, \"1.5\"]], \"histograms\": [[1767226500, {\"count\": \"10\", \"sum\": \"3.5\", \"buckets\": [[0, \"0.5\", \"1\", \"4\"], [3, \"1\", \"2\", \"6\"]]}], [1767226560, {\"count\": \"12\", \"sum\": \"4\", \"buckets\": [[1, \"-1\", \"0\", \"2\"], [0, \"0.5\", \"1\", \"10\"]]}]]}]}}",
+  "status": 200
+ }
+}

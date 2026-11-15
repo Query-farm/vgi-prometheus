@@ -1,0 +1,24 @@
+groups:
+  - name: fixture-recording
+    interval: 10s
+    rules:
+      - record: job:fixture_temperature_celsius:avg
+        expr: avg by (job) (fixture_temperature_celsius)
+        labels:
+          source: fixture
+  - name: fixture-alerts
+    interval: 5s
+    rules:
+      - alert: FixtureAlwaysFiring
+        expr: vector(1)
+        labels:
+          severity: info
+        annotations:
+          summary: Always firing, so the alerts table has a row.
+      - alert: FixtureTargetDown
+        expr: up == 0
+        for: 1h
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $labels.instance }} is down"

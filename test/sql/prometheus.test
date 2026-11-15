@@ -1,0 +1,466 @@
+# name: test/sql/prometheus.test
+# description: SQL tests for the prometheus worker against recorded Prometheus responses (test/fixture_server)
+# group: [prometheus]
+
+require vgi
+
+require-env PROMETHEUS_WORKER
+
+require-env PROMETHEUS_FIXTURE_URL
+
+require-env PROMETHEUS_FIXTURE_AUTH_URL
+
+statement ok
+ATTACH 'prometheus' (TYPE vgi, LOCATION '{PROMETHEUS_WORKER}');
+
+# vgi-go 0.42.0 cannot decode a pushed TIMESTAMPTZ filter in a non-UTC
+# session (see README "Known limitations"), so the suite pins UTC.
+statement ok
+SET TimeZone = 'UTC';
+
+# ------------------------------------------------------------------ secrets
+
+# Without a secret every function says how to create one.
+statement error
+SELECT * FROM prometheus.main.build_info();
+----
+CREATE SECRET
+
+statement ok
+CREATE SECRET prom_fixture (TYPE prometheus, BASE_URL '{PROMETHEUS_FIXTURE_URL}');
+
+query TT
+SELECT version, go_version IS NOT NULL FROM prometheus.main.build_info();
+----
+3.5.0	true
+
+# ------------------------------------------------------------------ query
+
+# Instant vector at a fixed time: one row per series, labels hoisted.
+query TTTTTR
+SELECT result_type, metric, job, instance, ts::VARCHAR, value
+FROM prometheus.main.query('fixture_temperature_celsius', at_time := TIMESTAMPTZ '2026-01-01 00:15:00+00')
+ORDER BY instance;
+----
+vector	fixture_temperature_celsius	fixture	node-a:9100	2026-01-01 00:15:00+00	20.0
+vector	fixture_temperature_celsius	fixture	node-b:9100	2026-01-01 00:15:00+00	30.0
+vector	fixture_temperature_celsius	fixture	node-c:9100	2026-01-01 00:15:00+00	10.0
+
+# The labels map carries every label.
+query TT
+SELECT labels['env'], labels['site'] FROM prometheus.main.query('fixture_temperature_celsius{instance="node-c:9100"}', at_time := TIMESTAMPTZ '2026-01-01 00:15:00+00');
+----
+staging	nyc
+
+# Aggregations drop __name__: metric is NULL, grouping labels stay.
+query TTR
+SELECT metric IS NULL, labels['code'], round(value, 4) FROM prometheus.main.query('sum by (code) (rate(fixture_requests_total{instance="node-a:9100"}[5m]))', at_time := TIMESTAMPTZ '2026-01-01 01:00:00+00') ORDER BY 2;
+----
+true	200	0.6667
+true	500	0.0667
+
+# Scalars and strings become one row.
+query TRT
+SELECT result_type, value, string_value FROM prometheus.main.query('1 + 1', at_time := TIMESTAMPTZ '2026-01-01 00:00:00+00');
+----
+scalar	2.0	NULL
+
+query TRT
+SELECT result_type, value, string_value FROM prometheus.main.query('"hello"', at_time := TIMESTAMPTZ '2026-01-01 00:00:00+00');
+----
+string	NULL	hello
+
+# NaN and +/-Inf survive as IEEE values.
+query TTTT
+SELECT labels['kind'], isnan(value), isinf(value), value > 0 FROM prometheus.main.query('fixture_special', at_time := TIMESTAMPTZ '2026-01-01 00:15:00+00') ORDER BY 1;
+----
+nan	true	false	true
+neginf	false	true	false
+posinf	false	true	true
+
+# A range selector in an instant query returns raw samples (matrix rows).
+query TII
+SELECT result_type, count(*), count(DISTINCT ts) FROM prometheus.main.query('fixture_temperature_celsius{instance="node-a:9100"}[5m]', at_time := TIMESTAMPTZ '2026-01-01 01:00:00+00') GROUP BY 1;
+----
+matrix	20	20
+
+# Label values needing escapes round-trip.
+query T
+SELECT labels['path'] = '/a"b\c' FROM prometheus.main.query('fixture_escape_test', at_time := TIMESTAMPTZ '2026-01-01 00:15:00+00');
+----
+true
+
+# Native histograms (hand-written fixture): typed struct, value NULL.
+query TRRIRRTT
+SELECT job, value, histogram.count, len(histogram.buckets), histogram.buckets[1].upper, histogram.buckets[2].count,
+       histogram.buckets[1].lower_inclusive, histogram.buckets[2].upper_inclusive
+FROM prometheus.main.query('fixture_native', at_time := TIMESTAMPTZ '2026-01-01 00:15:00+00') ORDER BY job;
+----
+float	7.0	NULL	NULL	NULL	NULL	NULL	NULL
+native	NULL	10.0	2	1.0	6.0	false	true
+
+# Native histograms from Prometheus's own self-scrape (recorded live, no fixed time).
+query TT
+SELECT bool_and(value IS NULL), bool_and(histogram.count >= 1 AND len(histogram.buckets) >= 1) FROM prometheus.main.query('prometheus_http_request_duration_seconds{handler="/metrics"}');
+----
+true	true
+
+# Warnings do not fail the query; fractional-second timestamps keep their milliseconds.
+query T
+SELECT ts::VARCHAR FROM prometheus.main.query('fixture_warn', at_time := TIMESTAMPTZ '2026-01-01 00:15:00+00');
+----
+2026-01-01 00:15:00.123+00
+
+# A bad expression is reported with the server's error type and message.
+statement error
+SELECT * FROM prometheus.main.query('rate(', at_time := TIMESTAMPTZ '2026-01-01 00:00:00+00');
+----
+bad_data
+
+statement error
+SELECT * FROM prometheus.main.query('fixture_too_many_samples', at_time := TIMESTAMPTZ '2026-01-01 00:15:00+00');
+----
+HTTP 422 execution
+
+# 503 is retried, then reported with its status.
+statement error
+SELECT * FROM prometheus.main.query('fixture_unavailable', at_time := TIMESTAMPTZ '2026-01-01 00:15:00+00');
+----
+HTTP 503
+
+statement error
+SELECT * FROM prometheus.main.query('fixture_proxy_error', at_time := TIMESTAMPTZ '2026-01-01 00:15:00+00');
+----
+HTTP 502
+
+# ------------------------------------------------------------------ query_range
+
+query TIRRR
+SELECT instance, count(*), min(value), max(value), avg(value)
+FROM prometheus.main.query_range('fixture_temperature_celsius', TIMESTAMPTZ '2026-01-01 00:00:00+00', TIMESTAMPTZ '2026-01-01 06:00:00+00', 60)
+GROUP BY instance ORDER BY instance;
+----
+node-a:9100	361	20.0	28.0	24.0
+node-b:9100	361	30.0	30.0	30.0
+node-c:9100	361	10.0	10.0	10.0
+
+# 4 hours at a 1 s step is 14,401 points: over Prometheus's 11,000-point limit,
+# so the worker splits it. The step is never changed.
+query IIR
+SELECT count(*), count(DISTINCT ts), sum(value)
+FROM prometheus.main.query_range('fixture_temperature_celsius{instance="node-a:9100"}', TIMESTAMPTZ '2026-01-01 00:00:00+00', TIMESTAMPTZ '2026-01-01 04:00:00+00', 1);
+----
+14401	14401	352820.0
+
+# Small chunks return exactly the same rows as one big request.
+query IIR
+SELECT count(*), count(DISTINCT ts), sum(value)
+FROM prometheus.main.query_range('fixture_temperature_celsius{instance="node-a:9100"}', TIMESTAMPTZ '2026-01-01 00:00:00+00', TIMESTAMPTZ '2026-01-01 01:00:00+00', 15, max_points_per_chunk := 7);
+----
+241	241	5800.0
+
+query IIR
+SELECT count(*), count(DISTINCT ts), sum(value)
+FROM prometheus.main.query_range('fixture_temperature_celsius{instance="node-a:9100"}', TIMESTAMPTZ '2026-01-01 00:00:00+00', TIMESTAMPTZ '2026-01-01 01:00:00+00', 15);
+----
+241	241	5800.0
+
+# Counter resets are handled by rate(): node-b resets at 03:00.
+query TR
+SELECT labels['instance'], round(max(value), 4)
+FROM prometheus.main.query_range('rate(fixture_requests_total{method="GET"}[5m])', TIMESTAMPTZ '2026-01-01 01:00:00+00', TIMESTAMPTZ '2026-01-01 05:00:00+00', 600)
+GROUP BY 1 ORDER BY 1;
+----
+node-a:9100	0.6667
+node-b:9100	0.3333
+
+# The gap in fixture_gappy: after 5 minutes of lookback the series is absent.
+query I
+SELECT count(*) FROM prometheus.main.query_range('fixture_gappy', TIMESTAMPTZ '2026-01-01 00:00:00+00', TIMESTAMPTZ '2026-01-01 06:00:00+00', 60);
+----
+306
+
+# Mixed float and native-histogram points come back in time order.
+query TRR
+SELECT ts::VARCHAR, value, histogram.sum FROM prometheus.main.query_range('fixture_native', TIMESTAMPTZ '2026-01-01 00:15:00+00', TIMESTAMPTZ '2026-01-01 00:16:00+00', 30) ORDER BY ts;
+----
+2026-01-01 00:15:00+00	NULL	3.5
+2026-01-01 00:15:30+00	1.5	NULL
+2026-01-01 00:16:00+00	NULL	4.0
+
+statement error
+SELECT * FROM prometheus.main.query_range('up', TIMESTAMPTZ '2026-01-02 00:00:00+00', TIMESTAMPTZ '2026-01-01 00:00:00+00', 60);
+----
+before start
+
+statement error
+SELECT * FROM prometheus.main.query_range('up', TIMESTAMPTZ '2026-01-01 00:00:00+00', TIMESTAMPTZ '2026-01-02 00:00:00+00', 0);
+----
+<REGEX>:.*
+
+# ------------------------------------------------------------------ samples (pushdown)
+
+# Raw samples: 15 s scrape interval, so 240 per series per hour.
+query TIRR
+SELECT instance, count(*), min(value), max(value) FROM prometheus.main.samples('fixture_temperature_celsius')
+WHERE job = 'fixture' AND instance IN ('node-a:9100', 'node-b:9100')
+  AND ts >= TIMESTAMPTZ '2026-01-01 00:00:00+00' AND ts < TIMESTAMPTZ '2026-01-01 01:00:00+00'
+GROUP BY instance ORDER BY instance;
+----
+node-a:9100	240	20.0	29.0
+node-b:9100	240	30.0	34.0
+
+# Boundaries are exact: > excludes, <= includes.
+query ITT
+SELECT count(*), min(ts)::VARCHAR, max(ts)::VARCHAR FROM prometheus.main.samples('fixture_temperature_celsius{instance="node-a:9100"}')
+WHERE ts > TIMESTAMPTZ '2026-01-01 00:00:00+00' AND ts <= TIMESTAMPTZ '2026-01-01 00:10:00+00';
+----
+40	2026-01-01 00:00:15+00	2026-01-01 00:10:00+00
+
+# Small raw chunks (60 s) return the same samples as one request.
+query IR
+SELECT count(*), sum(value) FROM prometheus.main.samples('fixture_temperature_celsius{instance="node-a:9100"}', chunk_seconds := 60)
+WHERE ts >= TIMESTAMPTZ '2026-01-01 00:00:00+00' AND ts < TIMESTAMPTZ '2026-01-01 00:30:00+00';
+----
+120	2940.0
+
+query IR
+SELECT count(*), sum(value) FROM prometheus.main.samples('fixture_temperature_celsius{instance="node-a:9100"}')
+WHERE ts >= TIMESTAMPTZ '2026-01-01 00:00:00+00' AND ts < TIMESTAMPTZ '2026-01-01 00:30:00+00';
+----
+120	2940.0
+
+# Extra label columns, LIKE pushdown, step mode (73 five-minute steps per series).
+query TTI
+SELECT env, site, count(*) FROM prometheus.main.samples('fixture_temperature_celsius', label_columns := 'env,site', step_seconds := 300)
+WHERE env LIKE 'prod%' AND ts BETWEEN TIMESTAMPTZ '2026-01-01 00:00:00+00' AND TIMESTAMPTZ '2026-01-01 06:00:00+00'
+GROUP BY ALL ORDER BY ALL;
+----
+prod	ams	146
+
+# OR on one label, prefix(), NOT LIKE, <>, regexp_matches (evaluated exactly in the worker).
+query TI
+SELECT instance, count(*) FROM prometheus.main.samples('fixture_temperature_celsius')
+WHERE (instance = 'node-a:9100' OR instance = 'node-c:9100') AND prefix(job, 'fix')
+  AND ts >= TIMESTAMPTZ '2026-01-01 00:00:00+00' AND ts < TIMESTAMPTZ '2026-01-01 00:10:00+00'
+GROUP BY ALL ORDER BY ALL;
+----
+node-a:9100	40
+node-c:9100	40
+
+query TI
+SELECT instance, count(*) FROM prometheus.main.samples('fixture_temperature_celsius')
+WHERE instance NOT LIKE 'node-a%' AND instance <> 'node-b:9100'
+  AND ts >= TIMESTAMPTZ '2026-01-01 00:00:00+00' AND ts < TIMESTAMPTZ '2026-01-01 00:10:00+00'
+GROUP BY ALL ORDER BY ALL;
+----
+node-c:9100	40
+
+query TI
+SELECT instance, count(*) FROM prometheus.main.samples('fixture_temperature_celsius')
+WHERE regexp_matches(instance, 'node-[bc]') AND ts >= TIMESTAMPTZ '2026-01-01 00:00:00+00' AND ts < TIMESTAMPTZ '2026-01-01 00:10:00+00'
+GROUP BY ALL ORDER BY ALL;
+----
+node-b:9100	40
+node-c:9100	40
+
+query I
+SELECT count(*) FROM prometheus.main.samples('fixture_temperature_celsius')
+WHERE instance ILIKE 'NODE-A%' AND ts >= TIMESTAMPTZ '2026-01-01 00:00:00+00' AND ts < TIMESTAMPTZ '2026-01-01 00:10:00+00';
+----
+40
+
+# Value filters are exact SQL semantics: NaN sorts above everything in DuckDB.
+query TI
+SELECT labels['kind'], count(*) FROM prometheus.main.samples('fixture_special')
+WHERE value > 1e300 AND ts >= TIMESTAMPTZ '2026-01-01 00:00:00+00' AND ts < TIMESTAMPTZ '2026-01-01 00:10:00+00'
+GROUP BY 1 ORDER BY 1;
+----
+nan	40
+posinf	40
+
+# Absent labels are NULL; IS NULL / IS NOT NULL push down as ="" / !="".
+query II
+SELECT count(*) FILTER (WHERE kind IS NULL), count(*) FILTER (WHERE kind IS NOT NULL)
+FROM prometheus.main.samples('{job="fixture2"}', label_columns := 'kind')
+WHERE ts >= TIMESTAMPTZ '2026-01-01 00:00:00+00' AND ts < TIMESTAMPTZ '2026-01-01 00:10:00+00';
+----
+120	120
+
+query I
+SELECT count(*) FROM prometheus.main.samples('{job="fixture2"}', label_columns := 'kind')
+WHERE kind IS NULL AND ts >= TIMESTAMPTZ '2026-01-01 00:00:00+00' AND ts < TIMESTAMPTZ '2026-01-01 00:10:00+00';
+----
+120
+
+# The raw gap: 240 samples missing between 01:00 and 02:00.
+query I
+SELECT count(*) FROM prometheus.main.samples('fixture_gappy', start_date := TIMESTAMPTZ '2026-01-01 00:00:00+00', end_date := TIMESTAMPTZ '2026-01-01 06:00:00+00');
+----
+1201
+
+# start_date/end_date work in any session time zone (no TIMESTAMPTZ filter is pushed).
+statement ok
+SET TimeZone = 'America/New_York';
+
+query I
+SELECT count(*) FROM prometheus.main.samples('fixture_temperature_celsius', start_date := TIMESTAMPTZ '2026-01-01 00:00:00+00', end_date := TIMESTAMPTZ '2026-01-01 00:59:59+00')
+WHERE instance = 'node-a:9100';
+----
+240
+
+statement ok
+SET TimeZone = 'UTC';
+
+# A lower time bound is required.
+statement error
+SELECT count(*) FROM prometheus.main.samples('fixture_temperature_celsius') WHERE job = 'fixture';
+----
+needs a time range
+
+statement error
+SELECT * FROM prometheus.main.samples('fixture_temperature_celsius', label_columns := 'ts', start_date := TIMESTAMPTZ '2026-01-01 00:00:00+00');
+----
+already a column
+
+statement error
+SELECT * FROM prometheus.main.samples('rate(x[5m])', start_date := TIMESTAMPTZ '2026-01-01 00:00:00+00');
+----
+series selector
+
+# ------------------------------------------------------------------ metadata
+
+query TI
+SELECT metric, count(*) FROM prometheus.main.series('{job="fixture"}', start_date := TIMESTAMPTZ '2026-01-01 00:00:00+00', end_date := TIMESTAMPTZ '2026-01-01 06:00:00+00')
+GROUP BY metric ORDER BY 2 DESC, 1;
+----
+fixture_request_duration_seconds_bucket	4
+fixture_requests_total	3
+fixture_temperature_celsius	3
+fixture_request_duration_seconds_count	1
+fixture_request_duration_seconds_sum	1
+
+query T
+SELECT label FROM prometheus.main.label_names(match := 'fixture_temperature_celsius', start_date := TIMESTAMPTZ '2026-01-01 00:00:00+00', end_date := TIMESTAMPTZ '2026-01-01 06:00:00+00') ORDER BY label;
+----
+__name__
+env
+instance
+job
+site
+
+query T
+SELECT value FROM prometheus.main.label_values('instance', match := 'fixture_temperature_celsius', start_date := TIMESTAMPTZ '2026-01-01 00:00:00+00', end_date := TIMESTAMPTZ '2026-01-01 06:00:00+00') ORDER BY value;
+----
+node-a:9100
+node-b:9100
+node-c:9100
+
+query T
+SELECT value FROM prometheus.main.label_values('__name__', match := '{job="fixture2"}', start_date := TIMESTAMPTZ '2026-01-01 00:00:00+00', end_date := TIMESTAMPTZ '2026-01-01 06:00:00+00') ORDER BY value;
+----
+fixture_escape_test
+fixture_gappy
+fixture_special
+
+query TT
+SELECT type, help FROM prometheus.main.metric_metadata(metric := 'prometheus_http_requests_total');
+----
+counter	Counter of HTTP requests.
+
+# ------------------------------------------------------------------ status
+
+query TTT
+SELECT state, scrape_pool, health FROM prometheus.main.targets() ORDER BY scrape_pool;
+----
+active	prometheus	up
+active	unreachable	down
+
+query TT
+SELECT labels['team'], last_error IS NULL FROM prometheus.main.targets(state := 'active') WHERE job = 'prometheus';
+----
+observability	true
+
+query TTTRT
+SELECT group_name, rule_name, rule_type, duration_seconds, labels['severity'] FROM prometheus.main.rules() ORDER BY group_name, rule_name;
+----
+fixture-alerts	FixtureAlwaysFiring	alerting	0.0	info
+fixture-alerts	FixtureTargetDown	alerting	3600.0	page
+fixture-recording	job:fixture_temperature_celsius:avg	recording	NULL	NULL
+
+query TT
+SELECT rule_name, query FROM prometheus.main.rules(rule_type := 'record');
+----
+job:fixture_temperature_celsius:avg	avg by (job) (fixture_temperature_celsius)
+
+query TTRT
+SELECT alert_name, state, value, annotations['summary'] FROM prometheus.main.alerts() WHERE alert_name = 'FixtureAlwaysFiring';
+----
+FixtureAlwaysFiring	firing	1.0	Always firing, so the alerts table has a row.
+
+query TT
+SELECT url, state FROM prometheus.main.alertmanagers();
+----
+http://alertmanager.invalid:9093/api/v2/alerts	active
+
+query IT
+SELECT count(*), bool_and(value >= 0) FROM prometheus.main.tsdb_status(top_n := 3) WHERE section = 'head';
+----
+5	true
+
+query I
+SELECT count(*) <= 3 FROM prometheus.main.tsdb_status(top_n := 3) WHERE section = 'series_count_by_metric_name';
+----
+true
+
+# ------------------------------------------------------------------ auth
+
+# The auth fixture demands credentials and a tenant (X-Scope-OrgID).
+statement ok
+CREATE SECRET prom_auth (TYPE prometheus, BASE_URL '{PROMETHEUS_FIXTURE_AUTH_URL}', BEARER_TOKEN 'wrong');
+
+statement error
+SELECT * FROM prometheus.main.build_info(secret_name := 'prom_auth');
+----
+HTTP 401
+
+statement ok
+CREATE OR REPLACE SECRET prom_auth (TYPE prometheus, BASE_URL '{PROMETHEUS_FIXTURE_AUTH_URL}', BEARER_TOKEN 'test-token');
+
+statement error
+SELECT * FROM prometheus.main.build_info(secret_name := 'prom_auth');
+----
+HTTP 403
+
+statement ok
+CREATE OR REPLACE SECRET prom_auth (TYPE prometheus, BASE_URL '{PROMETHEUS_FIXTURE_AUTH_URL}', BEARER_TOKEN 'test-token', TENANT_ID 'tenant-a');
+
+query T
+SELECT version FROM prometheus.main.build_info(secret_name := 'prom_auth');
+----
+3.5.0
+
+# Basic auth (Grafana Cloud style) with the tenant sent through EXTRA_HEADERS.
+statement ok
+CREATE OR REPLACE SECRET prom_auth (TYPE prometheus, BASE_URL '{PROMETHEUS_FIXTURE_AUTH_URL}', USERNAME 'grafana', PASSWORD 'secret-key', EXTRA_HEADERS '{"X-Scope-OrgID": "tenant-a"}');
+
+query IR
+SELECT count(*), sum(value) FROM prometheus.main.query_range('fixture_temperature_celsius{instance="node-a:9100"}', TIMESTAMPTZ '2026-01-01 00:00:00+00', TIMESTAMPTZ '2026-01-01 01:00:00+00', 15, max_points_per_chunk := 7, secret_name := 'prom_auth');
+----
+241	5800.0
+
+statement error
+SELECT * FROM prometheus.main.build_info(secret_name := 'nope');
+----
+no prometheus secret named
+
+statement ok
+DROP SECRET prom_auth;
+
+statement ok
+CREATE SECRET bad_url (TYPE prometheus, BASE_URL 'ftp://example.com');
+
+statement error
+SELECT * FROM prometheus.main.build_info(secret_name := 'bad_url');
+----
+http(s) URL
