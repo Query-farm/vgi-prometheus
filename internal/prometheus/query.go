@@ -21,7 +21,7 @@ const DefaultMaxPoints = 11000
 
 type queryArgs struct {
 	Promql     string     `vgi:"pos=0,doc=PromQL expression, e.g. 'sum by (job) (rate(http_requests_total[5m]))'."`
-	AtTime     *time.Time `vgi:"name=at_time,doc=Evaluation time (TIMESTAMPTZ). Omit or NULL for the server's current time."`
+	AtTime     *time.Time `vgi:"name=time,doc=Evaluation time (TIMESTAMPTZ). Omit or NULL for the server's current time."`
 	SecretName *string    `vgi:"name=secret_name,doc=Name of the prometheus secret to use when several exist; default: the unscoped one."`
 }
 
@@ -34,13 +34,13 @@ type QueryState struct {
 	Done       bool
 }
 
-// QueryFunc implements query(promql, at_time := ...).
+// QueryFunc implements query(promql, time := ...).
 type QueryFunc struct{}
 
 var _ vgi.TypedTableFunc[QueryState] = (*QueryFunc)(nil)
 
 var queryExamples = []vgi.CatalogExample{
-	{SQL: "SELECT instance, value FROM prometheus.main.query('fixture_temperature_celsius{site=\"ams\"}', at_time := TIMESTAMPTZ '2026-01-01 00:15:00+00') ORDER BY instance",
+	{SQL: "SELECT instance, value FROM prometheus.main.query('fixture_temperature_celsius{site=\"ams\"}', time := TIMESTAMPTZ '2026-01-01 00:15:00+00') ORDER BY instance",
 		Description: "Current temperature of every node at one site at a fixed time"},
 	{SQL: "SELECT labels['job'] AS job, value AS targets_up FROM prometheus.main.query('sum by (job) (up)') ORDER BY job",
 		Description: "How many targets are up per job right now"},
@@ -56,13 +56,13 @@ func (*QueryFunc) Metadata() vgi.FunctionMetadata {
 		Category: "query",
 		Keywords: "promql, instant query, prometheus, thanos, mimir, victoriametrics, metrics, /api/v1/query",
 		DocLLM: "Evaluate a PromQL expression at one instant (GET /api/v1/query) and return one row per " +
-			"result series. Positional arg: the PromQL text. Named args: at_time (TIMESTAMPTZ; omitted = now on the server), " +
+			"result series. Positional arg: the PromQL text. Named args: time (TIMESTAMPTZ; omitted = now on the server), " +
 			"secret_name (pick a named prometheus secret). Columns: result_type ('vector', 'matrix', 'scalar' or 'string'), " +
 			"metric (__name__), job, instance, labels MAP(VARCHAR,VARCHAR) with every label, ts TIMESTAMPTZ, value DOUBLE " +
 			"(NaN/+Inf/-Inf preserved; NULL for histograms/strings), histogram STRUCT for native histograms, string_value. " +
 			"A range selector such as 'up[5m]' returns raw samples as matrix rows. Aggregations like sum() drop __name__, so " +
 			"metric is NULL; read grouping labels from labels['name']. Needs a prometheus secret (CREATE SECRET (TYPE prometheus, BASE_URL '...')).",
-		DocMD: "## query(promql, at_time := NULL)\n\n" +
+		DocMD: "## query(promql, time := NULL)\n\n" +
 			"Instant PromQL evaluation (`/api/v1/query`). One row per result series; scalar and string results become one row.\n\n" +
 			"```sql\nCREATE SECRET (TYPE prometheus, BASE_URL 'http://localhost:9090');\n" +
 			"SELECT labels['job'] AS job, value FROM prometheus.main.query('sum by (job) (up)');\n```",

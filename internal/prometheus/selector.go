@@ -148,7 +148,13 @@ func tsBound(e *expr, cols map[string]colSpec, w *timeWindow) bool {
 	switch op {
 	case ">", ">=":
 		w.raiseLo(lo)
-	case "<", "<=":
+	case "<":
+		// ts < t on an exact millisecond excludes t itself.
+		if b.F == 0 && b.I%1000 == 0 {
+			hi = floorDiv(b.I, 1000) - 1
+		}
+		w.lowerHi(hi)
+	case "<=":
 		w.lowerHi(hi)
 	case "=":
 		w.raiseLo(lo)
