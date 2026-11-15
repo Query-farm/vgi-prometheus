@@ -25,6 +25,9 @@ type queryArgs struct {
 	SecretName *string    `vgi:"name=secret_name,doc=Name of the prometheus secret to use when several exist; default: the unscoped one."`
 }
 
+func (a queryArgs) secret() string      { return deref(a.SecretName) }
+func (a queryRangeArgs) secret() string { return deref(a.SecretName) }
+
 // QueryState is the instant-query cursor.
 type QueryState struct {
 	Promql     string
@@ -80,8 +83,8 @@ func (*QueryFunc) Metadata() vgi.FunctionMetadata {
 func (*QueryFunc) ArgumentSpecs() []vgi.ArgSpec { return vgi.DeriveArgSpecs(queryArgs{}) }
 
 // OnBind declares the output schema.
-func (*QueryFunc) OnBind(_ *vgi.BindParams) (*vgi.BindResponse, error) {
-	return vgi.BindSchema(schemaOf(queryColumns))
+func (*QueryFunc) OnBind(params *vgi.BindParams) (*vgi.BindResponse, error) {
+	return bindWithSecret[queryArgs](params, schemaOf(queryColumns))
 }
 
 // NewState copies the arguments.
@@ -197,8 +200,8 @@ func (*QueryRangeFunc) Metadata() vgi.FunctionMetadata {
 func (*QueryRangeFunc) ArgumentSpecs() []vgi.ArgSpec { return vgi.DeriveArgSpecs(queryRangeArgs{}) }
 
 // OnBind declares the output schema.
-func (*QueryRangeFunc) OnBind(_ *vgi.BindParams) (*vgi.BindResponse, error) {
-	return vgi.BindSchema(schemaOf(queryColumns))
+func (*QueryRangeFunc) OnBind(params *vgi.BindParams) (*vgi.BindResponse, error) {
+	return bindWithSecret[queryRangeArgs](params, schemaOf(queryColumns))
 }
 
 // stepMillis converts a step in seconds to whole milliseconds (Prometheus's resolution).

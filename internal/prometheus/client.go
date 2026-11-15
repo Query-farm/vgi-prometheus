@@ -78,6 +78,20 @@ var secretSchemaMetadata = arrow.NewMetadata(
 // prometheus secret(s) and pass them to the worker.
 var secretRequirements = []vgi.SecretRequirement{{SecretType: SecretType}}
 
+// bindWithSecret binds a table function's schema. When secret_name names a
+// secret, the first bind asks the extension to resolve that secret by name
+// (two-phase bind); otherwise only the default secret of the type is sent.
+func bindWithSecret[A secretNamed](params *vgi.BindParams, schema *arrow.Schema) (*vgi.BindResponse, error) {
+	var a A
+	if err := vgi.BindArgs(params.Args, &a); err != nil {
+		return nil, err
+	}
+	if name := a.secret(); name != "" && !params.ResolvedSecretsProvided {
+		return &vgi.BindResponse{SecretScopeRequest: []vgi.SecretLookup{{SecretType: SecretType, SecretName: name}}}, nil
+	}
+	return vgi.BindSchema(schema)
+}
+
 // conn is a resolved connection. It is built per call from the secret and is
 // never stored in scan state.
 type conn struct {

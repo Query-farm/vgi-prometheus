@@ -46,6 +46,8 @@ type samplesArgs struct {
 	SecretName        *string    `vgi:"name=secret_name,doc=Name of the prometheus secret to use when several exist."`
 }
 
+func (a samplesArgs) secret() string { return deref(a.SecretName) }
+
 // SamplesState is the scan cursor. Exported fields only: it is gob-encoded
 // into the HTTP continuation token.
 type SamplesState struct {
@@ -199,7 +201,7 @@ func (*SamplesFunc) OnBind(params *vgi.BindParams) (*vgi.BindResponse, error) {
 	if err := validateSelector(args.Metric); err != nil {
 		return nil, err
 	}
-	return vgi.BindSchema(schemaOf(samplesColumns(extra)))
+	return bindWithSecret[samplesArgs](params, schemaOf(samplesColumns(extra)))
 }
 
 // NewState compiles the pushed filters and plans the window.

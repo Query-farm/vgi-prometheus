@@ -41,8 +41,8 @@ func (f *simpleFunc[A]) Name() string                   { return f.name }
 func (f *simpleFunc[A]) Metadata() vgi.FunctionMetadata { return f.meta() }
 func (f *simpleFunc[A]) ArgumentSpecs() []vgi.ArgSpec   { var a A; return vgi.DeriveArgSpecs(a) }
 func (f *simpleFunc[A]) schema() *arrow.Schema          { return arrow.NewSchema(f.columns, nil) }
-func (f *simpleFunc[A]) OnBind(_ *vgi.BindParams) (*vgi.BindResponse, error) {
-	return vgi.BindSchema(f.schema())
+func (f *simpleFunc[A]) OnBind(params *vgi.BindParams) (*vgi.BindResponse, error) {
+	return bindWithSecret[A](params, f.schema())
 }
 
 func (f *simpleFunc[A]) NewState(params *vgi.ProcessParams) (*SimpleState, error) {

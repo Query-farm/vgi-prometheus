@@ -509,6 +509,6 @@ NULL	NULL
 
 # The tools compose with the live tables: every recorded rule parses.
 query I
-SELECT count(*) FROM prometheus.main.rules() WHERE NOT prometheus.main.is_valid(query);
+SELECT count(*) FROM prometheus.main.rules(secret_name := 'prom_fixture') WHERE NOT prometheus.main.is_valid(query);
 ----
 0
