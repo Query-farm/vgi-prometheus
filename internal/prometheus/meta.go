@@ -196,6 +196,7 @@ var agentTestTasks = []agentTask{
 	{Name: "head_series", Prompt: "How many series are in the TSDB head block?"},
 	{Name: "server_version", Prompt: "Which Prometheus version is the server running?"},
 }
+
 // CatalogTags are the catalog-level discovery tags.
 var CatalogTags = map[string]string{
 	"vgi.title":              "VGI Prometheus Worker",

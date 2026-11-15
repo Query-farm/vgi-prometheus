@@ -60,7 +60,7 @@ func metricNames(e parser.Expr) []string {
 		name := vs.Name
 		if name == "" {
 			for _, m := range vs.LabelMatchers {
-				if m.Name == labels.MetricName && m.Type == labels.MatchEqual {
+				if m.Name == model.MetricNameLabel && m.Type == labels.MatchEqual {
 					name = m.Value
 				}
 			}
@@ -153,10 +153,10 @@ func newIsValid() *promqlScalar {
 			DocMD: "## is_valid(expr)\n\n`true` when the PromQL parses, `false` when it does not, `NULL` for `NULL`." +
 				"\n\nUses the upstream Prometheus parser, so experimental functions are accepted."},
 		examples: []vgi.CatalogExample{{
-			SQL: "SELECT rule_name, query FROM prometheus.main.rules() WHERE NOT prometheus.main.is_valid(query)",
+			SQL:         "SELECT rule_name, query FROM prometheus.main.rules() WHERE NOT prometheus.main.is_valid(query)",
 			Description: "Rules whose expression no longer parses with the current PromQL grammar"}},
 		executable: []executableExample{{Description: "Check three expressions",
-			SQL: "SELECT e, prometheus.main.is_valid(e) AS ok FROM (VALUES ('rate(x[5m])'), ('rate(x[5m]'), ('sum by (job) (up)')) t(e) ORDER BY e",
+			SQL:      "SELECT e, prometheus.main.is_valid(e) AS ok FROM (VALUES ('rate(x[5m])'), ('rate(x[5m]'), ('sum by (job) (up)')) t(e) ORDER BY e",
 			Expected: [][]any{{"rate(x[5m])", true}, {"rate(x[5m]", false}, {"sum by (job) (up)", true}}}},
 		result: arrow.FixedWidthTypes.Boolean,
 		eval: func(b array.Builder, s string) {
@@ -177,10 +177,10 @@ func newParseError() *promqlScalar {
 				"Pair it with is_valid to report what is wrong with stored rules." + toolsDocSuffix,
 			DocMD: "## parse_error(expr)\n\n`NULL` when the PromQL parses; otherwise `line:column: message` from the upstream parser."},
 		examples: []vgi.CatalogExample{{
-			SQL: "SELECT rule_name, prometheus.main.parse_error(query) AS problem FROM prometheus.main.rules() WHERE prometheus.main.parse_error(query) IS NOT NULL",
+			SQL:         "SELECT rule_name, prometheus.main.parse_error(query) AS problem FROM prometheus.main.rules() WHERE prometheus.main.parse_error(query) IS NOT NULL",
 			Description: "Why each broken rule fails to parse"}},
 		executable: []executableExample{{Description: "Errors for a broken and a valid expression",
-			SQL: "SELECT e, prometheus.main.parse_error(e) AS problem FROM (VALUES ('up'), ('sum(rate(x[5m])')) t(e) ORDER BY e",
+			SQL:      "SELECT e, prometheus.main.parse_error(e) AS problem FROM (VALUES ('up'), ('sum(rate(x[5m])')) t(e) ORDER BY e",
 			Expected: [][]any{{"sum(rate(x[5m])", "1:16: parse error: unclosed left parenthesis"}, {"up", nil}}}},
 		result: arrow.BinaryTypes.String,
 		eval: func(b array.Builder, s string) {
@@ -205,10 +205,10 @@ func newFormatExpr() *promqlScalar {
 				"parse or is NULL." + toolsDocSuffix,
 			DocMD: "## format_expr(expr)\n\nThe expression as Prometheus prints it (`String()` of the parsed AST), or `NULL` when it does not parse."},
 		examples: []vgi.CatalogExample{{
-			SQL: "SELECT prometheus.main.format_expr(query) AS canonical, count(*) AS rules FROM prometheus.main.rules() GROUP BY 1 HAVING count(*) > 1",
+			SQL:         "SELECT prometheus.main.format_expr(query) AS canonical, count(*) AS rules FROM prometheus.main.rules() GROUP BY 1 HAVING count(*) > 1",
 			Description: "Rules that are the same expression written differently"}},
 		executable: []executableExample{{Description: "Two spellings, one canonical form",
-			SQL: "SELECT DISTINCT prometheus.main.format_expr(e) AS canonical FROM (VALUES ('sum(rate(http_requests_total[5m]))by(job)'), ('sum by (job) (rate(http_requests_total[5m]))')) t(e)",
+			SQL:      "SELECT DISTINCT prometheus.main.format_expr(e) AS canonical FROM (VALUES ('sum(rate(http_requests_total[5m]))by(job)'), ('sum by (job) (rate(http_requests_total[5m]))')) t(e)",
 			Expected: [][]any{{"sum by (job) (rate(http_requests_total[5m]))"}}}},
 		result: arrow.BinaryTypes.String,
 		eval: func(b array.Builder, s string) {
@@ -234,10 +234,10 @@ func newMetricNames() *promqlScalar {
 				"before renaming or dropping it, or join it to series() for cardinality." + toolsDocSuffix,
 			DocMD: "## metric_names(expr)\n\nSorted, distinct metric names read by the expression's selectors (`VARCHAR[]`)."},
 		examples: []vgi.CatalogExample{{
-			SQL: "SELECT m AS metric, count(*) AS rules FROM prometheus.main.rules(), unnest(prometheus.main.metric_names(query)) u(m) GROUP BY m ORDER BY rules DESC",
+			SQL:         "SELECT m AS metric, count(*) AS rules FROM prometheus.main.rules(), unnest(prometheus.main.metric_names(query)) u(m) GROUP BY m ORDER BY rules DESC",
 			Description: "Which metrics the most rules depend on"}},
 		executable: []executableExample{{Description: "Metrics read by a ratio query",
-			SQL: "SELECT prometheus.main.metric_names('sum(rate(errors_total[5m])) / sum(rate(requests_total[5m])) > on() group_left vector(0.1) or errors_total') AS metrics",
+			SQL:      "SELECT prometheus.main.metric_names('sum(rate(errors_total[5m])) / sum(rate(requests_total[5m])) > on() group_left vector(0.1) or errors_total') AS metrics",
 			Expected: [][]any{{[]any{"errors_total", "requests_total"}}}}},
 		result: arrow.ListOf(arrow.BinaryTypes.String),
 		eval: func(b array.Builder, s string) {
@@ -268,10 +268,10 @@ func newDurationSeconds() *durationScalar {
 				"into a step_seconds value." + toolsDocSuffix,
 			DocMD: "## duration_seconds(d)\n\n`'1h30m'` → `5400.0`. Units: ms, s, m, h, d, w, y. `NULL` when invalid."},
 		examples: []vgi.CatalogExample{{
-			SQL: "SELECT scrape_pool, prometheus.main.duration_seconds('1m') / count(*) AS seconds_per_target FROM prometheus.main.targets() GROUP BY scrape_pool",
+			SQL:         "SELECT scrape_pool, prometheus.main.duration_seconds('1m') / count(*) AS seconds_per_target FROM prometheus.main.targets() GROUP BY scrape_pool",
 			Description: "Spread a one-minute budget over each scrape pool's targets"}},
 		executable: []executableExample{{Description: "Convert durations",
-			SQL: "SELECT d, prometheus.main.duration_seconds(d) AS seconds FROM (VALUES ('1h30m'), ('5m'), ('250ms'), ('1d'), ('soon')) t(d) ORDER BY d",
+			SQL:      "SELECT d, prometheus.main.duration_seconds(d) AS seconds FROM (VALUES ('1h30m'), ('5m'), ('250ms'), ('1d'), ('soon')) t(d) ORDER BY d",
 			Expected: [][]any{{"1d", 86400.0}, {"1h30m", 5400.0}, {"250ms", 0.25}, {"5m", 300.0}, {"soon", nil}}}},
 		result: arrow.PrimitiveTypes.Float64,
 		eval: func(b array.Builder, s string) {
