@@ -130,12 +130,13 @@ const catalogDocLLM = "Query any Prometheus-compatible HTTP API (Prometheus, Tha
 	"Grafana Cloud, Amazon Managed Prometheus through a bearer token proxy) from SQL. Every API function needs a " +
 	"DuckDB secret: CREATE SECRET (TYPE prometheus, BASE_URL 'http://host:9090', BEARER_TOKEN or USERNAME/PASSWORD, " +
 	"optional TENANT_ID sent as X-Scope-OrgID, optional EXTRA_HEADERS as a JSON object). " +
-	"query(promql, time := ...) is an instant query; query_range(promql, start, end, step_seconds) evaluates at a fixed " +
-	"step, split into requests under the 11,000-point limit; both return long rows (metric, job, instance, labels map, " +
-	"ts, value, histogram). samples(metric) returns stored samples with SQL label and ts filters pushed into the PromQL " +
-	"selector and request window. series, label_names, label_values and metric_metadata read series metadata; targets, " +
-	"rules, alerts, alertmanagers, tsdb_status and build_info read server status. is_valid, parse_error, format_expr, " +
-	"metric_names and duration_seconds run the PromQL parser locally with no server. All functions are read-only."
+	"Use the PromQL query functions for arbitrary expressions (rate(), aggregations); range evaluation keeps the " +
+	"requested step and is split into requests under the 11,000-point limit. Use the raw-samples table when you want " +
+	"stored samples for one metric: SQL filters on labels and ts are pushed into the PromQL selector and request " +
+	"window. Results are long (one row per series and timestamp) with metric, job and instance hoisted, all labels " +
+	"in a `MAP`, `TIMESTAMPTZ` times, `DOUBLE` values (NaN/Inf kept) and native histograms as a struct. Other functions " +
+	"read series metadata and server status (scrape targets, rules, alerts, TSDB cardinality), and a set of scalars " +
+	"validate, canonicalize and inspect PromQL locally with no server. All functions are read-only."
 
 // CatalogDocMD is the catalog's comment: one short paragraph for directories.
 const CatalogDocMD = "Query Prometheus-compatible HTTP APIs (Prometheus, Thanos, Mimir, VictoriaMetrics, Grafana Cloud) " +
@@ -154,18 +155,24 @@ const catalogDocMDLong = "# Prometheus in DuckDB\n\n" +
 
 const schemaDocLLM = "The main schema holds every function. Table functions that call the server take an optional " +
 	"secret_name named argument (default: the prometheus secret whose scope matches). Time arguments are named " +
-	"start_date/end_date (query_range takes them positionally) and step arguments step_seconds. Rows are long: one row " +
-	"per series and timestamp. Read a label with labels['name'] or, in samples, list it in label_columns to get a " +
-	"pushdown column. Scalars (is_valid, parse_error, format_expr, metric_names, duration_seconds) take one `VARCHAR` " +
-	"column and need no secret."
+	"start_date/end_date (range queries take them positionally) and step arguments step_seconds. Rows are long: one " +
+	"row per series and timestamp. Read a label with labels['name'] or, in the samples table, list it in " +
+	"label_columns to get a pushdown column. The PromQL scalars take one `VARCHAR` expression and need no secret."
 
-// SchemaDocMD is the main schema's human-facing description (also its comment).
+// SchemaComment is the main schema's one-line comment.
+const SchemaComment = "PromQL queries, raw samples, series metadata and server status from one Prometheus-compatible API, plus offline PromQL tools."
+
+// SchemaDocMD is the main schema's human-facing description.
 const SchemaDocMD = "## main\n\n" +
-	"Everything this worker exposes lives here. Table functions call the Prometheus HTTP API named by a " +
-	"`prometheus` secret and return long rows (one per series and timestamp); scalars run the PromQL parser " +
-	"locally.\n\n" +
-	"Reach for `samples` when you want SQL filters pushed into the PromQL selector, and for the " +
-	"query functions when you need arbitrary PromQL such as `rate()` or aggregations."
+	"Table functions call the Prometheus HTTP API named by a `prometheus` secret (bearer token or basic auth, " +
+	"optional `X-Scope-OrgID` tenant); pass `secret_name` to choose between several. Scalars run the PromQL parser " +
+	"locally and need no secret.\n\n" +
+	"Conventions: rows are long (one per series and timestamp) with `metric`, `job` and `instance` hoisted and every " +
+	"label in a `labels` map; times are `TIMESTAMPTZ`, values `DOUBLE` with NaN and Inf kept, and windows are " +
+	"`start_date`/`end_date` with steps in `step_seconds`. Range evaluation keeps the step you ask for and splits long " +
+	"windows into requests under Prometheus's 11,000-point limit.\n\n" +
+	"Reach for `samples` when you want SQL filters on labels and `ts` pushed into the PromQL selector and request " +
+	"window, and for the query functions when you need arbitrary PromQL such as `rate()` or aggregations."
 
 // agentTask is one public analyst task for `vgi-lint simulate`.
 type agentTask struct {
